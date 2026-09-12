@@ -1,0 +1,2 @@
+# WalletCore
+Wallet Project
