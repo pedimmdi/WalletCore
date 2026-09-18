@@ -105,3 +105,16 @@ class LedgerEntry(models.Model):
 
     def __str__(self):
         return f'{self.wallet_id} | {self.entry_type} | {self.amount}'
+
+
+class IdempotencyKey(models.Model):
+    key = models.CharField(max_length=255, unique=True, db_index=True)
+    response_data = models.JSONField()
+    status_code = models.PositiveSmallIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.key
