@@ -16,33 +16,43 @@ from .models import (
 
 
 def get_or_create_user_wallet(user):
-    with transaction.atomic():
+    wallet = (
+        Wallet.objects.select_related('account').filter(user=user).first()
+    )
+    if wallet:
+        return wallet
+
+    try:
+        with transaction.atomic():
+            account = Account.objects.create(
+                name=f'Wallet Account - {user.pk}',
+                account_type=Account.AccountType.USER,
+            )
+            wallet = Wallet.objects.create(
+                user=user,
+                account=account,
+            )
+
+    except IntegrityError:
         wallet = (
-            Wallet.objects
-            .select_related("account")
-            .filter(user=user)
-            .first()
+            Wallet.objects.select_related('account').get(user=user)
         )
 
-        if wallet:
-            return wallet
-
-        account = Account.objects.create(
-            name=f"Wallet Account - {user.pk}",
-            account_type=Account.AccountType.USER,
-        )
-
-        return Wallet.objects.create(
-            user=user,
-            account=account,
-        )
+    return wallet
 
 
 def get_system_account():
-    return Account.objects.get(
+    account, _ = Account.objects.get_or_create(
         account_type=Account.AccountType.SYSTEM,
-        is_active=True,
+        defaults={
+            "name": "System Account",
+        },
     )
+
+    if not account.is_active:
+        raise ValidationError("System account is inactive.")
+
+    return account
 
 
 def get_account_balance(account):

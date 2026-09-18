@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.db import models
+from django.db.models import Q
 
 
 class Account(models.Model):
@@ -21,6 +22,13 @@ class Account(models.Model):
 
     class Meta:
         ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['account_type'],
+                condition=Q(account_type='system'),
+                name='unique_system_account',
+            ),
+        ]
 
     def __str__(self):
         return f'{self.name} ({self.account_type})'
@@ -59,7 +67,7 @@ class Transaction(models.Model):
         PENDING = 'pending', 'Pending'
         COMPLETED = 'completed', 'Completed'
         FAILED = 'failed', 'Failed'
-        CANCELED = 'canceled', 'Canceled'
+        REVERSED = 'reversed', 'Reversed'
 
     id = models.UUIDField(
         primary_key=True,
@@ -93,6 +101,12 @@ class Transaction(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0),
+                name="transaction_amount_positive",
+            ),
+        ]
 
     def __str__(self):
         return f'{self.type} - {self.amount}'
@@ -133,6 +147,12 @@ class LedgerEntry(models.Model):
         indexes = [
             models.Index(fields=["account", "-created_at"]),
             models.Index(fields=["transaction"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0),
+                name="ledger_entry_amount_positive",
+            ),
         ]
 
     def __str__(self):
