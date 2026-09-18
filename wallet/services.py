@@ -1,17 +1,21 @@
 import hashlib
 import json
 from decimal import Decimal
-
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Case, DecimalField, F, Sum, When
-
 from .models import (
     Account,
     IdempotencyKey,
     LedgerEntry,
     Transaction,
     Wallet,
+)
+from .exceptions import (
+    InsufficientBalance,
+    InactiveWallet,
+    InvalidAmount,
+    InvalidIdempotencyKey,
 )
 
 
@@ -50,7 +54,9 @@ def get_system_account():
     )
 
     if not account.is_active:
-        raise ValidationError("System account is inactive.")
+        raise InactiveWallet(
+            "System account is inactive."
+        )
 
     return account
 
@@ -113,9 +119,8 @@ def get_or_create_idempotency_key(key, request_hash):
             )
 
             if idempotency_key.request_hash != request_hash:
-                raise ValidationError(
-                    "Idempotency-Key was already used with "
-                    "different request data."
+                raise InvalidIdempotencyKey(
+                    "Idempotency-Key was already used with different request data."
                 )
 
             return idempotency_key, False
@@ -139,9 +144,8 @@ def get_or_create_idempotency_key(key, request_hash):
             )
 
             if idempotency_key.request_hash != request_hash:
-                raise ValidationError(
-                    "Idempotency-Key was already used with "
-                    "different request data."
+                raise InvalidIdempotencyKey(
+                    "Idempotency-Key was already used with different request data."
                 )
 
             return idempotency_key, False
@@ -160,12 +164,13 @@ def serialize_transaction(transaction):
     }
 
 
-@transaction.atomic
 def deposit(user, amount):
     amount = Decimal(amount)
 
     if amount <= 0:
-        raise ValidationError("The amount must be positive.")
+        raise InvalidAmount(
+            "Amount must be positive."
+        )
 
     user_wallet = (
         Wallet.objects
@@ -175,7 +180,10 @@ def deposit(user, amount):
     )
 
     if not user_wallet.is_active:
-        raise ValidationError("Wallet is inactive.")
+        raise InactiveWallet(
+            "Wallet is inactive."
+        )
+
 
     user_account = (
         Account.objects
@@ -183,17 +191,24 @@ def deposit(user, amount):
         .get(pk=user_wallet.account_id)
     )
 
+
+    system_account = get_system_account()
+
     system_account = (
         Account.objects
         .select_for_update()
-        .get(
-            account_type=Account.AccountType.SYSTEM,
-            is_active=True,
-        )
+        .get(pk=system_account.pk)
     )
 
-    user_balance = get_account_balance(user_account)
-    system_balance = get_account_balance(system_account)
+
+    user_balance = get_account_balance(
+        user_account
+    )
+
+    system_balance = get_account_balance(
+        system_account
+    )
+
 
     tx = Transaction.objects.create(
         type=Transaction.TransactionType.DEPOSIT,
@@ -202,53 +217,87 @@ def deposit(user, amount):
         initiated_by=user,
     )
 
+
     LedgerEntry.objects.create(
         account=system_account,
         transaction=tx,
         entry_type=LedgerEntry.EntryType.DEBIT,
         amount=amount,
-        balance_after=system_balance - amount,
+        balance_after=(
+            system_balance - amount
+        ),
     )
+
 
     LedgerEntry.objects.create(
         account=user_account,
         transaction=tx,
         entry_type=LedgerEntry.EntryType.CREDIT,
         amount=amount,
-        balance_after=user_balance + amount,
+        balance_after=(
+            user_balance + amount
+        ),
     )
+
+
+    Wallet.objects.filter(
+        pk=user_wallet.pk
+    ).update(
+        balance=user_balance + amount
+    )
+
 
     return tx
 
 
 @transaction.atomic
-def deposit_idempotent(user, amount, idempotency_key):
-    """
-    Execute deposit exactly once for a given Idempotency-Key.
-    """
+def deposit_idempotent(
+    user,
+    amount,
+    idempotency_key
+):
 
     request_hash = generate_request_hash(
         {
             "user_id": user.pk,
-            "amount": str(Decimal(amount)),
+            "amount": str(
+                Decimal(amount)
+            ),
         }
     )
 
-    key, created = get_or_create_idempotency_key(
-        idempotency_key,
-        request_hash,
+
+    key, created = (
+        get_or_create_idempotency_key(
+            idempotency_key,
+            request_hash,
+        )
     )
 
+
     if not created:
-        if key.response_body is not None:
-            return key.response_body, key.status_code
 
-    tx = deposit(user, amount)
+        if key.response_body:
+            return (
+                key.response_body,
+                key.status_code,
+            )
 
-    response_body = serialize_transaction(tx)
+
+    tx = deposit(
+        user,
+        amount,
+    )
+
+
+    response_body = serialize_transaction(
+        tx
+    )
+
 
     key.response_body = response_body
     key.status_code = 201
+
     key.save(
         update_fields=[
             "response_body",
@@ -256,7 +305,11 @@ def deposit_idempotent(user, amount, idempotency_key):
         ]
     )
 
-    return response_body, 201
+
+    return (
+        response_body,
+        201,
+    )
 
 
 @transaction.atomic
@@ -264,7 +317,7 @@ def withdraw(user, amount):
     amount = Decimal(amount)
 
     if amount <= 0:
-        raise ValidationError("The amount must be positive.")
+        raise InvalidAmount("Amount must be positive.")
 
     user_wallet = (
         Wallet.objects
@@ -274,7 +327,7 @@ def withdraw(user, amount):
     )
 
     if not user_wallet.is_active:
-        raise ValidationError("Wallet is inactive.")
+        raise InactiveWallet("Wallet is inactive.")
 
     user_account = (
         Account.objects
@@ -294,7 +347,7 @@ def withdraw(user, amount):
     user_balance = get_account_balance(user_account)
 
     if user_balance < amount:
-        raise ValidationError("Insufficient balance.")
+        raise InsufficientBalance("Insufficient balance.")
 
     system_balance = get_account_balance(system_account)
 
@@ -321,6 +374,12 @@ def withdraw(user, amount):
         balance_after=system_balance + amount,
     )
 
+    Wallet.objects.filter(
+        pk=user_wallet.pk
+    ).update(
+        balance=user_balance - amount
+    )
+
     return tx
 
 
@@ -329,7 +388,7 @@ def transfer(from_user, to_user, amount):
     amount = Decimal(amount)
 
     if amount <= 0:
-        raise ValidationError("The amount must be positive.")
+        raise InvalidAmount("Amount must be positive.")
 
     if from_user == to_user:
         raise ValidationError(
@@ -363,12 +422,12 @@ def transfer(from_user, to_user, amount):
         )
 
     if not from_wallet.is_active:
-        raise ValidationError(
+        raise InactiveWallet(
             "Sender wallet is inactive."
         )
 
     if not to_wallet.is_active:
-        raise ValidationError(
+        raise InactiveWallet(
             "Receiver wallet is inactive."
         )
 
@@ -394,7 +453,7 @@ def transfer(from_user, to_user, amount):
     from_balance = get_account_balance(from_account)
 
     if from_balance < amount:
-        raise ValidationError("Insufficient balance.")
+        raise InsufficientBalance("Insufficient balance.")
 
     to_balance = get_account_balance(to_account)
 
@@ -419,6 +478,18 @@ def transfer(from_user, to_user, amount):
         entry_type=LedgerEntry.EntryType.CREDIT,
         amount=amount,
         balance_after=to_balance + amount,
+    )
+
+    Wallet.objects.filter(
+        pk=from_wallet.pk
+    ).update(
+        balance=from_balance - amount
+    )
+
+    Wallet.objects.filter(
+        pk=to_wallet.pk
+    ).update(
+        balance=to_balance + amount
     )
 
     return tx
