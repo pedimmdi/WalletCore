@@ -259,6 +259,7 @@ def deposit_idempotent(
 
     request_hash = generate_request_hash(
         {
+            "operation": "deposit",
             "user_id": user.pk,
             "amount": str(
                 Decimal(amount)
