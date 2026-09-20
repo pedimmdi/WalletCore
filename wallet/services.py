@@ -164,6 +164,7 @@ def serialize_transaction(transaction):
     }
 
 
+@transaction.atomic
 def deposit(user, amount):
     amount = Decimal(amount)
 
