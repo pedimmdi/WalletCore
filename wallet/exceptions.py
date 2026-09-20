@@ -5,9 +5,9 @@ class WalletException(Exception):
     pass
 
 
-class InsufficientBalance(WalletException):
+class InsufficientFunds(WalletException):
     """
-    Raised when wallet balance is not enough.
+    Raised when wallet balance is not enough for a withdrawal.
     """
     pass
 

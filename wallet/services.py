@@ -12,7 +12,7 @@ from .models import (
     Wallet,
 )
 from .exceptions import (
-    InsufficientBalance,
+    InsufficientFunds,
     InactiveWallet,
     InvalidAmount,
     InvalidIdempotencyKey,
@@ -315,11 +315,68 @@ def deposit_idempotent(
 
 
 @transaction.atomic
+def withdraw_idempotent(
+    user,
+    amount,
+    idempotency_key,
+):
+    request_hash = generate_request_hash(
+        {
+            "operation": "withdraw",
+            "user_id": user.pk,
+            "amount": str(
+                Decimal(amount)
+            ),
+        }
+    )
+
+    key, created = (
+        get_or_create_idempotency_key(
+            idempotency_key,
+            request_hash,
+        )
+    )
+
+    if not created:
+        if key.response_body:
+            return (
+                key.response_body,
+                key.status_code,
+            )
+
+    tx = withdraw(
+        user,
+        amount,
+    )
+
+    response_body = serialize_transaction(
+        tx
+    )
+
+    key.response_body = response_body
+    key.status_code = 201
+
+    key.save(
+        update_fields=[
+            "response_body",
+            "status_code",
+        ]
+    )
+
+    return (
+        response_body,
+        201,
+    )
+
+
+@transaction.atomic
 def withdraw(user, amount):
     amount = Decimal(amount)
 
     if amount <= 0:
-        raise InvalidAmount("Amount must be positive.")
+        raise InvalidAmount(
+            "Amount must be positive."
+        )
 
     user_wallet = (
         Wallet.objects
@@ -329,7 +386,9 @@ def withdraw(user, amount):
     )
 
     if not user_wallet.is_active:
-        raise InactiveWallet("Wallet is inactive.")
+        raise InactiveWallet(
+            "Wallet is inactive."
+        )
 
     user_account = (
         Account.objects
@@ -346,12 +405,18 @@ def withdraw(user, amount):
         )
     )
 
-    user_balance = get_account_balance(user_account)
+    user_balance = get_account_balance(
+        user_account
+    )
 
     if user_balance < amount:
-        raise InsufficientBalance("Insufficient balance.")
+        raise InsufficientFunds(
+            "Insufficient funds."
+        )
 
-    system_balance = get_account_balance(system_account)
+    system_balance = get_account_balance(
+        system_account
+    )
 
     tx = Transaction.objects.create(
         type=Transaction.TransactionType.WITHDRAW,

@@ -6,10 +6,17 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .exceptions import (
+    InsufficientFunds,
+    InactiveWallet,
+    InvalidAmount,
+    InvalidIdempotencyKey,
+)
 from .serializers import WalletSerializer
 from .services import (
     deposit_idempotent,
     get_or_create_user_wallet,
+    withdraw_idempotent,
 )
 
 
@@ -64,6 +71,69 @@ class DepositView(APIView):
             )
 
         except ValidationError as exc:
+            return Response(
+                {
+                    "detail": str(exc),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            response_body,
+            status=response_status,
+        )
+
+
+class WithdrawView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        idempotency_key = request.headers.get(
+            "Idempotency-Key"
+        )
+
+        if not idempotency_key:
+            return Response(
+                {
+                    "detail": "Idempotency-Key header is required."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        raw_amount = request.data.get("amount")
+
+        if raw_amount is None:
+            return Response(
+                {
+                    "detail": "Amount is required."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            amount = Decimal(str(raw_amount))
+        except (InvalidOperation, ValueError):
+            return Response(
+                {
+                    "detail": "Invalid amount."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            response_body, response_status = withdraw_idempotent(
+                user=request.user,
+                amount=amount,
+                idempotency_key=idempotency_key,
+            )
+
+        except (
+            InsufficientFunds,
+            InactiveWallet,
+            InvalidAmount,
+            InvalidIdempotencyKey,
+            ValidationError,
+        ) as exc:
             return Response(
                 {
                     "detail": str(exc),
