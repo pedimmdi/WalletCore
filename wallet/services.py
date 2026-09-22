@@ -455,7 +455,9 @@ def transfer(from_user, to_user, amount):
     amount = Decimal(amount)
 
     if amount <= 0:
-        raise InvalidAmount("Amount must be positive.")
+        raise InvalidAmount(
+            "Amount must be positive."
+        )
 
     if from_user == to_user:
         raise ValidationError(
@@ -465,7 +467,12 @@ def transfer(from_user, to_user, amount):
     wallets = list(
         Wallet.objects
         .select_related("account")
-        .filter(user__in=[from_user, to_user])
+        .filter(
+            user_id__in=[
+                from_user.pk,
+                to_user.pk,
+            ]
+        )
         .order_by("pk")
         .select_for_update()
     )
@@ -505,24 +512,33 @@ def transfer(from_user, to_user, amount):
         ]
     )
 
-    locked_accounts = {
+    locked_accounts = list(
+        Account.objects
+        .select_for_update()
+        .filter(pk__in=account_ids)
+        .order_by("pk")
+    )
+
+    account_map = {
         account.pk: account
-        for account in (
-            Account.objects
-            .select_for_update()
-            .filter(pk__in=account_ids)
-        )
+        for account in locked_accounts
     }
 
-    from_account = locked_accounts[from_wallet.account_id]
-    to_account = locked_accounts[to_wallet.account_id]
+    from_account = account_map[from_wallet.account_id]
+    to_account = account_map[to_wallet.account_id]
 
-    from_balance = get_account_balance(from_account)
+    from_balance = get_account_balance(
+        from_account
+    )
 
     if from_balance < amount:
-        raise InsufficientBalance("Insufficient balance.")
+        raise InsufficientFunds(
+            "Insufficient funds."
+        )
 
-    to_balance = get_account_balance(to_account)
+    to_balance = get_account_balance(
+        to_account
+    )
 
     tx = Transaction.objects.create(
         type=Transaction.TransactionType.TRANSFER,

@@ -20,10 +20,12 @@ from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
 )
+from wallet.auth_views import RegisterView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     # JWT endpoints
+    path("api/auth/register/", RegisterView.as_view(), name="register"),
     path('api/auth/login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     # wallet

@@ -1,5 +1,6 @@
 from decimal import Decimal, InvalidOperation
 
+from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -16,8 +17,12 @@ from .serializers import WalletSerializer
 from .services import (
     deposit_idempotent,
     get_or_create_user_wallet,
+    transfer,
     withdraw_idempotent,
 )
+
+
+User = get_user_model()
 
 
 class WalletView(APIView):
@@ -144,4 +149,88 @@ class WithdrawView(APIView):
         return Response(
             response_body,
             status=response_status,
+        )
+
+
+class TransferView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        raw_to_user_id = request.data.get("to_user_id")
+        raw_amount = request.data.get("amount")
+
+        if raw_to_user_id is None:
+            return Response(
+                {
+                    "detail": "to_user_id is required."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if raw_amount is None:
+            return Response(
+                {
+                    "detail": "Amount is required."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            to_user_id = int(raw_to_user_id)
+        except (TypeError, ValueError):
+            return Response(
+                {
+                    "detail": "Invalid to_user_id."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            amount = Decimal(str(raw_amount))
+        except (InvalidOperation, ValueError):
+            return Response(
+                {
+                    "detail": "Invalid amount."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            to_user = User.objects.get(pk=to_user_id)
+
+            tx = transfer(
+                from_user=request.user,
+                to_user=to_user,
+                amount=amount,
+            )
+
+        except User.DoesNotExist:
+            return Response(
+                {
+                    "detail": "Receiver user does not exist."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except (
+            InsufficientFunds,
+            InactiveWallet,
+            InvalidAmount,
+            ValidationError,
+        ) as exc:
+            return Response(
+                {
+                    "detail": str(exc),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {
+                "id": str(tx.id),
+                "type": tx.type,
+                "status": tx.status,
+                "amount": str(tx.amount),
+            },
+            status=status.HTTP_201_CREATED,
         )
