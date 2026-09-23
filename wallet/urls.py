@@ -5,6 +5,7 @@ from .views import (
     WalletView,
     WithdrawView,
     TransferView,
+    TransactionListView,
 )
 
 urlpatterns = [
@@ -12,4 +13,5 @@ urlpatterns = [
     path("deposit/", DepositView.as_view(), name="deposit"),
     path("withdraw/", WithdrawView.as_view(), name="withdraw"),
     path("transfer/", TransferView.as_view(), name="transfer"),
+    path("transactions/", TransactionListView.as_view(), name="transaction-list"),
 ]

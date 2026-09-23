@@ -6,20 +6,25 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.generics import ListAPIView
+from django_filters.rest_framework import DjangoFilterBackend
 
+from .filters import TransactionFilter
+from .models import Transaction
 from .exceptions import (
     InsufficientFunds,
     InactiveWallet,
     InvalidAmount,
     InvalidIdempotencyKey,
 )
-from .serializers import WalletSerializer
+from .serializers import WalletSerializer, TransactionListSerializer
 from .services import (
     deposit_idempotent,
     get_or_create_user_wallet,
     transfer,
     withdraw_idempotent,
 )
+from .pagination import StandardResultsSetPagination
 
 
 User = get_user_model()
@@ -233,4 +238,19 @@ class TransferView(APIView):
                 "amount": str(tx.amount),
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+class TransactionListView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = TransactionListSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = TransactionFilter
+    pagination_class = StandardResultsSetPagination
+
+    def get_queryset(self):
+        return (
+            Transaction.objects
+            .filter(initiated_by=self.request.user)
+            .order_by("-created_at")
         )
