@@ -241,3 +241,59 @@ def test_transaction_history_includes_transfer(
     assert transaction["type"] == "transfer"
     assert transaction["status"] == "completed"
     assert transaction["amount"] == "40.00"
+
+
+@pytest.mark.django_db
+def test_admin_wallet_list_requires_staff(api_client):
+    user = UserFactory(is_staff=False)
+    api_client.force_authenticate(user=user)
+
+    response = api_client.get(reverse("admin-wallet-list"))
+
+    assert response.status_code == 403
+
+
+@pytest.mark.django_db
+def test_admin_wallet_list_for_staff(api_client):
+    staff = UserFactory(is_staff=True)
+    WalletFactory()
+
+    api_client.force_authenticate(user=staff)
+
+    response = api_client.get(reverse("admin-wallet-list"))
+
+    assert response.status_code == 200
+    assert len(response.data) == 1
+
+
+@pytest.mark.django_db
+def test_admin_wallet_freeze_requires_staff(api_client):
+    user = UserFactory(is_staff=False)
+    wallet = WalletFactory()
+
+    api_client.force_authenticate(user=user)
+
+    response = api_client.post(
+        reverse("admin-wallet-freeze", kwargs={"pk": wallet.pk})
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.django_db
+def test_admin_wallet_freeze_for_staff(api_client):
+    staff = UserFactory(is_staff=True)
+    wallet = WalletFactory(is_active=True)
+
+    api_client.force_authenticate(user=staff)
+
+    response = api_client.post(
+        reverse("admin-wallet-freeze", kwargs={"pk": wallet.pk})
+    )
+
+    assert response.status_code == 200
+
+    wallet.refresh_from_db()
+
+    assert wallet.is_active is False
+    assert response.data["is_active"] is False

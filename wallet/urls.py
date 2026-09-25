@@ -6,6 +6,8 @@ from .views import (
     WithdrawView,
     TransferView,
     TransactionListView,
+    AdminWalletListView,
+    AdminWalletFreezeView,
 )
 
 urlpatterns = [
@@ -14,4 +16,10 @@ urlpatterns = [
     path("withdraw/", WithdrawView.as_view(), name="withdraw"),
     path("transfer/", TransferView.as_view(), name="transfer"),
     path("transactions/", TransactionListView.as_view(), name="transaction-list"),
+    path("admin/wallets/", AdminWalletListView.as_view(), name="admin-wallet-list"),
+    path(
+        "admin/wallets/<int:pk>/freeze/",
+        AdminWalletFreezeView.as_view(),
+        name="admin-wallet-freeze",
+    ),
 ]

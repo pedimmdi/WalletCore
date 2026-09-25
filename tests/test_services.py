@@ -8,7 +8,7 @@ from django.db import close_old_connections
 from rest_framework.test import APIClient
 
 from tests.factories import SystemAccountFactory, WalletFactory
-from wallet.exceptions import InsufficientFunds, InvalidIdempotencyKey
+from wallet.exceptions import InsufficientFunds, InvalidIdempotencyKey, InactiveWallet
 from wallet.models import IdempotencyKey, LedgerEntry, Transaction
 from wallet.services import (
     deposit,
@@ -725,3 +725,38 @@ def test_concurrent_withdraw_allows_only_one_success():
     assert LedgerEntry.objects.filter(
         transaction__type=Transaction.TransactionType.WITHDRAW,
     ).count() == 2
+
+
+@pytest.mark.django_db
+def test_withdraw_rejects_inactive_wallet():
+    wallet = WalletFactory(is_active=False)
+    SystemAccountFactory()
+
+    with pytest.raises(InactiveWallet):
+        withdraw(wallet.user, Decimal("50.00"))
+
+
+@pytest.mark.django_db
+def test_transfer_rejects_inactive_sender_wallet():
+    sender = WalletFactory(is_active=False)
+    receiver = WalletFactory()
+
+    with pytest.raises(InactiveWallet):
+        transfer(
+            sender.user,
+            receiver.user,
+            Decimal("50.00"),
+        )
+
+
+@pytest.mark.django_db
+def test_transfer_rejects_inactive_receiver_wallet():
+    sender = WalletFactory()
+    receiver = WalletFactory(is_active=False)
+
+    with pytest.raises(InactiveWallet):
+        transfer(
+            sender.user,
+            receiver.user,
+            Decimal("50.00"),
+        )

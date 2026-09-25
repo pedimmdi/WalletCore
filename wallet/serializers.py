@@ -18,3 +18,21 @@ class TransactionListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Transaction
         fields = ["id", "type", "status", "amount", "description", "created_at"]
+
+
+class AdminWalletSerializer(serializers.ModelSerializer):
+    balance = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Wallet
+        fields = [
+            "id",
+            "user",
+            "balance",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_balance(self, obj):
+        return get_account_balance(obj.account)

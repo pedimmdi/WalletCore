@@ -4,20 +4,26 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView
 from django_filters.rest_framework import DjangoFilterBackend
 
 from .filters import TransactionFilter
-from .models import Transaction
+from .models import Transaction, Wallet
 from .exceptions import (
     InsufficientFunds,
     InactiveWallet,
     InvalidAmount,
     InvalidIdempotencyKey,
 )
-from .serializers import WalletSerializer, TransactionListSerializer
+from .permissions import IsStaff
+from .serializers import (
+    WalletSerializer,
+    TransactionListSerializer,
+    AdminWalletSerializer,
+)
 from .services import (
     deposit_idempotent,
     get_or_create_user_wallet,
@@ -253,4 +259,43 @@ class TransactionListView(ListAPIView):
             Transaction.objects
             .filter(initiated_by=self.request.user)
             .order_by("-created_at")
+        )
+
+
+class AdminWalletListView(ListAPIView):
+    serializer_class = AdminWalletSerializer
+    permission_classes = [IsAuthenticated, IsStaff]
+
+    def get_queryset(self):
+        return (
+            Wallet.objects
+            .select_related("user", "account")
+            .order_by("-created_at")
+        )
+
+
+class AdminWalletFreezeView(APIView):
+    permission_classes = [IsAuthenticated, IsStaff]
+
+    def post(self, request, pk):
+        try:
+            wallet = (
+                Wallet.objects
+                .select_related("user", "account")
+                .get(pk=pk)
+            )
+        except Wallet.DoesNotExist:
+            return Response(
+                {"detail": "Wallet not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        wallet.is_active = False
+        wallet.save(update_fields=["is_active", "updated_at"])
+
+        serializer = AdminWalletSerializer(wallet)
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK,
         )
