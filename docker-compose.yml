@@ -4,6 +4,14 @@ services:
     env_file: .env
     volumes:
       - postgres_data:/var/lib/postgresql/data
+  
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
 
   web:
     build: .
@@ -15,6 +23,28 @@ services:
     env_file: .env
     depends_on:
       - db
+      - redis
+  
+  celery_worker:
+    build: .
+    command: celery -A core worker --loglevel=info
+    volumes:
+      - .:/app
+    env_file: .env
+    depends_on:
+      - db
+      - redis
+
+  celery_beat:
+    build: .
+    command: celery -A core beat --loglevel=info
+    volumes:
+      - .:/app
+    env_file: .env
+    depends_on:
+      - db
+      - redis
 
 volumes:
   postgres_data:
+  redis_data:
