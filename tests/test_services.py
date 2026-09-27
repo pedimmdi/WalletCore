@@ -17,6 +17,7 @@ from wallet.services import (
     withdraw_idempotent,
     transfer,
 )
+from wallet.reconciliation import reconcile_wallets
 
 
 @pytest.mark.django_db
@@ -760,3 +761,34 @@ def test_transfer_rejects_inactive_receiver_wallet():
             receiver.user,
             Decimal("50.00"),
         )
+
+
+@pytest.mark.django_db
+def test_reconciliation_passes_when_wallet_matches_ledger():
+    wallet = WalletFactory(balance=Decimal("0.00"))
+    SystemAccountFactory()
+
+    deposit(wallet.user, Decimal("100.00"))
+
+    mismatches = reconcile_wallets()
+
+    assert mismatches == []
+
+
+@pytest.mark.django_db
+def test_reconciliation_detects_wallet_mismatch():
+    wallet = WalletFactory(balance=Decimal("0.00"))
+    SystemAccountFactory()
+
+    deposit(wallet.user, Decimal("100.00"))
+
+    wallet.balance = Decimal("80.00")
+    wallet.save(update_fields=["balance", "updated_at"])
+
+    mismatches = reconcile_wallets()
+
+    assert len(mismatches) == 1
+    assert mismatches[0]["wallet_id"] == wallet.pk
+    assert mismatches[0]["wallet_balance"] == Decimal("80.00")
+    assert mismatches[0]["ledger_balance"] == Decimal("100.00")
+    assert mismatches[0]["difference"] == Decimal("-20.00")
