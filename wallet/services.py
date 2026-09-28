@@ -175,18 +175,19 @@ def deposit(user, amount):
             "Amount must be positive."
         )
 
+    user_wallet = get_or_create_user_wallet(user)
+
     user_wallet = (
         Wallet.objects
         .select_related("account")
         .select_for_update()
-        .get(user=user)
+        .get(pk=user_wallet.pk)
     )
 
     if not user_wallet.is_active:
         raise InactiveWallet(
             "Wallet is inactive."
         )
-
 
     user_account = (
         Account.objects
@@ -383,11 +384,13 @@ def withdraw(user, amount):
             "Amount must be positive."
         )
 
+    user_wallet = get_or_create_user_wallet(user)
+
     user_wallet = (
         Wallet.objects
         .select_related("account")
         .select_for_update()
-        .get(user=user)
+        .get(pk=user_wallet.pk)
     )
 
     if not user_wallet.is_active:
