@@ -592,3 +592,69 @@ def transfer(from_user, to_user, amount):
     )
 
     return tx
+
+
+@transaction.atomic
+def transfer_idempotent(
+    from_user,
+    to_user,
+    amount,
+    idempotency_key,
+):
+
+    request_hash = generate_request_hash(
+        {
+            "operation": "transfer",
+            "from_user_id": from_user.pk,
+            "to_user_id": to_user.pk,
+            "amount": str(
+                Decimal(amount)
+            ),
+        }
+    )
+
+
+    key, created = (
+        get_or_create_idempotency_key(
+            idempotency_key,
+            request_hash,
+        )
+    )
+
+
+    if not created:
+
+        if key.response_body:
+            return (
+                key.response_body,
+                key.status_code,
+            )
+
+
+    tx = transfer(
+        from_user,
+        to_user,
+        amount,
+    )
+
+
+    response_body = serialize_transaction(
+        tx
+    )
+
+
+    key.response_body = response_body
+    key.status_code = 201
+
+    key.save(
+        update_fields=[
+            "response_body",
+            "status_code",
+        ]
+    )
+
+
+    return (
+        response_body,
+        201,
+    )

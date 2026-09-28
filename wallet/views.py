@@ -26,7 +26,7 @@ from .serializers import (
 from .services import (
     deposit_idempotent,
     get_or_create_user_wallet,
-    transfer,
+    transfer_idempotent,
     withdraw_idempotent,
 )
 from .pagination import StandardResultsSetPagination
@@ -184,6 +184,16 @@ class TransferView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        idempotency_key = request.headers.get("Idempotency-Key")
+
+        if not idempotency_key:
+            return Response(
+                {
+                    "detail": "Idempotency-Key header is required."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         raw_to_user_id = request.data.get("to_user_id")
         raw_amount = request.data.get("amount")
 
@@ -226,10 +236,11 @@ class TransferView(APIView):
         try:
             to_user = User.objects.get(pk=to_user_id)
 
-            tx = transfer(
+            response_body, response_status = transfer_idempotent(
                 from_user=request.user,
                 to_user=to_user,
                 amount=amount,
+                idempotency_key=idempotency_key,
             )
 
         except User.DoesNotExist:
@@ -244,6 +255,7 @@ class TransferView(APIView):
             InsufficientFunds,
             InactiveWallet,
             InvalidAmount,
+            InvalidIdempotencyKey,
             ValidationError,
         ) as exc:
             return Response(
@@ -254,13 +266,8 @@ class TransferView(APIView):
             )
 
         return Response(
-            {
-                "id": str(tx.id),
-                "type": tx.type,
-                "status": tx.status,
-                "amount": str(tx.amount),
-            },
-            status=status.HTTP_201_CREATED,
+            response_body,
+            status=response_status,
         )
 
 
