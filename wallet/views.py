@@ -103,7 +103,13 @@ class DepositView(APIView):
                 idempotency_key=idempotency_key,
             )
 
-        except ValidationError as exc:
+        except (
+            InsufficientFunds,
+            InactiveWallet,
+            InvalidAmount,
+            InvalidIdempotencyKey,
+            ValidationError,
+        ) as exc:
             return Response(
                 {
                     "detail": str(exc),
