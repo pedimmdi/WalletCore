@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.urls import reverse
 from rest_framework.test import APIClient
-
+from django.core.cache import cache
 from tests.factories import UserFactory, WalletFactory, SystemAccountFactory
 from wallet.models import LedgerEntry, Transaction
 from wallet.services import deposit, transfer
@@ -297,3 +297,120 @@ def test_admin_wallet_freeze_for_staff(api_client):
 
     assert wallet.is_active is False
     assert response.data["is_active"] is False
+
+
+@pytest.mark.django_db
+def test_wallet_me_uses_cache():
+    client = APIClient()
+    user = UserFactory()
+
+    client.force_authenticate(user=user)
+
+    response = client.get(reverse("wallet-me"))
+
+    assert response.status_code == 200
+
+    cached_data = cache.get(f"wallet:me:{user.pk}")
+
+    assert cached_data == response.data
+
+
+@pytest.mark.django_db(transaction=True)
+def test_wallet_cache_is_invalidated_after_deposit():
+    client = APIClient()
+    user = UserFactory()
+
+    client.force_authenticate(user=user)
+
+    response = client.get(reverse("wallet-me"))
+
+    assert response.status_code == 200
+    assert cache.get(f"wallet:me:{user.pk}") is not None
+
+    response = client.post(
+        reverse("deposit"),
+        {"amount": "100.00"},
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="stage18-test-deposit-001",
+    )
+
+    assert response.status_code == 201
+
+    assert cache.get(f"wallet:me:{user.pk}") is None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_wallet_cache_is_invalidated_after_withdraw():
+    client = APIClient()
+    wallet = WalletFactory()
+    user = wallet.user
+
+    client.force_authenticate(user=user)
+
+    client.post(
+        reverse("deposit"),
+        {"amount": "100.00"},
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="stage18-withdraw-deposit-001",
+    )
+
+    response = client.get(reverse("wallet-me"))
+
+    assert response.status_code == 200
+    assert cache.get(f"wallet:me:{user.pk}") is not None
+
+    response = client.post(
+        reverse("withdraw"),
+        {"amount": "30.00"},
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="stage18-withdraw-001",
+    )
+
+    assert response.status_code == 201
+
+    assert cache.get(f"wallet:me:{user.pk}") is None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_wallet_cache_is_invalidated_after_transfer():
+    client = APIClient()
+
+    sender_wallet = WalletFactory()
+    receiver_wallet = WalletFactory()
+
+    sender = sender_wallet.user
+    receiver = receiver_wallet.user
+
+    client.force_authenticate(user=sender)
+
+    client.post(
+        reverse("deposit"),
+        {"amount": "100.00"},
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="stage18-transfer-deposit-001",
+    )
+
+    client.get(reverse("wallet-me"))
+
+    client.force_authenticate(user=receiver)
+    client.get(reverse("wallet-me"))
+
+    assert cache.get(f"wallet:me:{sender.pk}") is not None
+    assert cache.get(f"wallet:me:{receiver.pk}") is not None
+
+    client.force_authenticate(user=sender)
+
+    response = client.post(
+        reverse("transfer"),
+        {
+            "to_user_id": receiver.pk,
+            "amount": "20.00",
+        },
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="stage18-transfer-001",
+    )
+
+    assert response.status_code == 201
+
+    assert cache.get(f"wallet:me:{sender.pk}") is None
+    assert cache.get(f"wallet:me:{receiver.pk}") is None

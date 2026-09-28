@@ -17,6 +17,8 @@ from .exceptions import (
     InvalidAmount,
     InvalidIdempotencyKey,
 )
+from django.db import transaction
+from .cache import delete_wallet_cache
 
 
 def get_or_create_user_wallet(user):
@@ -247,6 +249,9 @@ def deposit(user, amount):
         balance=user_balance + amount
     )
 
+    transaction.on_commit(
+        lambda: delete_wallet_cache(user.pk)
+    )
 
     return tx
 
@@ -447,6 +452,10 @@ def withdraw(user, amount):
         balance=user_balance - amount
     )
 
+    transaction.on_commit(
+        lambda: delete_wallet_cache(user.pk)
+    )
+
     return tx
 
 
@@ -573,6 +582,13 @@ def transfer(from_user, to_user, amount):
         pk=to_wallet.pk
     ).update(
         balance=to_balance + amount
+    )
+
+    transaction.on_commit(
+        lambda: (
+            delete_wallet_cache(from_user.pk),
+            delete_wallet_cache(to_user.pk),
+        )
     )
 
     return tx

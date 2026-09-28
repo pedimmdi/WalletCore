@@ -10,7 +10,7 @@ from rest_framework.generics import ListAPIView
 from django_filters.rest_framework import DjangoFilterBackend
 
 from .filters import TransactionFilter
-from .models import Transaction, Wallet
+from .models import Account, Transaction, Wallet
 from .exceptions import (
     InsufficientFunds,
     InactiveWallet,
@@ -30,6 +30,7 @@ from .services import (
     withdraw_idempotent,
 )
 from .pagination import StandardResultsSetPagination
+from .cache import get_wallet_cache, set_wallet_cache
 
 
 User = get_user_model()
@@ -39,9 +40,26 @@ class WalletView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        wallet = get_or_create_user_wallet(request.user)
+        cached_data = get_wallet_cache(request.user.id)
+
+        if cached_data is not None:
+            return Response(cached_data, status=status.HTTP_200_OK)
+
+        wallet, _ = Wallet.objects.get_or_create(
+            user=request.user,
+            defaults={
+                "account": Account.objects.create(
+                    name=f"Wallet Account - {request.user.username}",
+                    account_type=Account.AccountType.USER,
+                ),
+            },
+        )
+
         serializer = WalletSerializer(wallet)
-        return Response(serializer.data)
+
+        set_wallet_cache(request.user.id, serializer.data)
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class DepositView(APIView):
