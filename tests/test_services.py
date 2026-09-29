@@ -7,15 +7,16 @@ from django.db.models import Sum
 from django.db import close_old_connections
 from rest_framework.test import APIClient
 
-from tests.factories import SystemAccountFactory, WalletFactory
+from tests.factories import SystemAccountFactory, UserFactory, WalletFactory
 from wallet.exceptions import InsufficientFunds, InvalidIdempotencyKey, InactiveWallet
-from wallet.models import IdempotencyKey, LedgerEntry, Transaction
+from wallet.models import IdempotencyKey, LedgerEntry, Transaction, Wallet
 from wallet.services import (
     deposit,
     deposit_idempotent,
     withdraw,
     withdraw_idempotent,
     transfer,
+    transfer_idempotent,
 )
 from wallet.reconciliation import reconcile_wallets
 
@@ -236,6 +237,25 @@ def test_deposit_api_is_idempotent():
     wallet.refresh_from_db()
 
     assert wallet.balance == Decimal("100.00")
+
+
+@pytest.mark.django_db
+def test_deposit_creates_wallet_for_user_without_existing_wallet():
+    user = UserFactory()
+    SystemAccountFactory()
+
+    assert not Wallet.objects.filter(user=user).exists()
+
+    amount = Decimal("100.00")
+
+    tx = deposit(user, amount)
+
+    assert tx.type == Transaction.TransactionType.DEPOSIT
+
+    wallet = Wallet.objects.get(user=user)
+
+    assert wallet.balance == Decimal("100.00")
+    assert LedgerEntry.objects.filter(transaction=tx).count() == 2
 
 
 # ------------------------------------------------------------------
@@ -683,6 +703,51 @@ def test_transfer_rejects_self_transfer():
     assert LedgerEntry.objects.filter(
         transaction__type=Transaction.TransactionType.TRANSFER
     ).count() == 0
+
+
+@pytest.mark.django_db
+def test_transfer_idempotent_returns_same_response_for_same_request():
+    sender_wallet = WalletFactory(balance=Decimal("0.00"))
+    receiver_wallet = WalletFactory(balance=Decimal("0.00"))
+    SystemAccountFactory()
+
+    deposit(sender_wallet.user, Decimal("100.00"))
+
+    amount = Decimal("40.00")
+    idem_key = "transfer-idempotent-123"
+
+    body1, status1 = transfer_idempotent(
+        sender_wallet.user,
+        receiver_wallet.user,
+        amount,
+        idem_key,
+    )
+
+    body2, status2 = transfer_idempotent(
+        sender_wallet.user,
+        receiver_wallet.user,
+        amount,
+        idem_key,
+    )
+
+    assert status1 == 201
+    assert status2 == 201
+
+    assert body1 == body2
+
+    assert Transaction.objects.filter(
+        type=Transaction.TransactionType.TRANSFER
+    ).count() == 1
+
+    assert LedgerEntry.objects.filter(
+        transaction__type=Transaction.TransactionType.TRANSFER
+    ).count() == 2
+
+    sender_wallet.refresh_from_db()
+    receiver_wallet.refresh_from_db()
+
+    assert sender_wallet.balance == Decimal("60.00")
+    assert receiver_wallet.balance == Decimal("40.00")
 
 
 @pytest.mark.django_db(transaction=True)

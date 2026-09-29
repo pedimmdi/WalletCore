@@ -36,6 +36,28 @@ def authenticated_client(api_client, user):
 
 
 @pytest.mark.django_db
+def test_deposit_api_rejects_negative_amount(
+    authenticated_client,
+    wallet,
+    system_account,
+):
+    response = authenticated_client.post(
+        reverse("deposit"),
+        {"amount": "-10.00"},
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="negative-amount-test-001",
+    )
+
+    assert response.status_code == 400
+    assert "detail" in response.data
+
+    wallet.refresh_from_db()
+
+    assert wallet.balance == Decimal("0.00")
+    assert Transaction.objects.count() == 0
+
+
+@pytest.mark.django_db
 def test_transaction_history_returns_user_transactions(
     authenticated_client,
     wallet,
