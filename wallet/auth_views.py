@@ -7,6 +7,8 @@ from .auth_serializers import RegisterSerializer
 
 
 class RegisterView(APIView):
+    """Register a new user account."""
+
     permission_classes = [AllowAny]
 
     def post(self, request):

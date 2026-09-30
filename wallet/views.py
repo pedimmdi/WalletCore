@@ -2,6 +2,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -22,6 +23,10 @@ from .serializers import (
     WalletSerializer,
     TransactionListSerializer,
     AdminWalletSerializer,
+    DepositRequestSerializer,
+    WithdrawRequestSerializer,
+    TransferRequestSerializer,
+    TransactionResponseSerializer,
 )
 from .services import (
     deposit_idempotent,
@@ -35,8 +40,21 @@ from .cache import get_wallet_cache, set_wallet_cache
 
 User = get_user_model()
 
+IDEMPOTENCY_KEY_PARAMETER = OpenApiParameter(
+    name="Idempotency-Key",
+    type=OpenApiTypes.STR,
+    location=OpenApiParameter.HEADER,
+    required=True,
+    description=(
+        "Unique key that makes this request safely retryable. "
+        "Reusing the same key with different request data returns an error."
+    ),
+)
+
 
 class WalletView(APIView):
+    """Return the authenticated user's wallet balance (cached for a short TTL)."""
+    
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -63,8 +81,15 @@ class WalletView(APIView):
 
 
 class DepositView(APIView):
+    """Deposit an amount into the authenticated user's wallet."""
+
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+            request=DepositRequestSerializer,
+            parameters=[IDEMPOTENCY_KEY_PARAMETER],
+            responses={201: TransactionResponseSerializer},
+        )
     def post(self, request):
         idempotency_key = request.headers.get("Idempotency-Key")
 
@@ -124,8 +149,15 @@ class DepositView(APIView):
 
 
 class WithdrawView(APIView):
+    """Withdraw an amount from the authenticated user's wallet."""
+
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+            request=WithdrawRequestSerializer,
+            parameters=[IDEMPOTENCY_KEY_PARAMETER],
+            responses={201: TransactionResponseSerializer},
+        )
     def post(self, request):
         idempotency_key = request.headers.get(
             "Idempotency-Key"
@@ -187,8 +219,15 @@ class WithdrawView(APIView):
 
 
 class TransferView(APIView):
+    """Transfer an amount from the authenticated user to another user."""
+
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        request=TransferRequestSerializer,
+        parameters=[IDEMPOTENCY_KEY_PARAMETER],
+        responses={201: TransactionResponseSerializer},
+    )
     def post(self, request):
         idempotency_key = request.headers.get("Idempotency-Key")
 
@@ -278,6 +317,8 @@ class TransferView(APIView):
 
 
 class TransactionListView(ListAPIView):
+    """List the authenticated user's transactions, filterable by type and status."""
+
     permission_classes = [IsAuthenticated]
     serializer_class = TransactionListSerializer
     filter_backends = [DjangoFilterBackend]
@@ -293,6 +334,8 @@ class TransactionListView(ListAPIView):
 
 
 class AdminWalletListView(ListAPIView):
+    """List all wallets. Staff only."""
+
     serializer_class = AdminWalletSerializer
     permission_classes = [IsAuthenticated, IsStaff]
 
@@ -305,8 +348,11 @@ class AdminWalletListView(ListAPIView):
 
 
 class AdminWalletFreezeView(APIView):
+    """Freeze a wallet so it can no longer deposit, withdraw, or send transfers. Staff only."""
+
     permission_classes = [IsAuthenticated, IsStaff]
 
+    @extend_schema(responses={200: AdminWalletSerializer})
     def post(self, request, pk):
         try:
             wallet = (
