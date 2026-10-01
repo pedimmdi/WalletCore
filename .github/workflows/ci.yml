@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: python:3.11-slim
+
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_DB: walletcore_test
+          POSTGRES_USER: walletcore
+          POSTGRES_PASSWORD: walletcore
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7
+
+    env:
+      SECRET_KEY: ci-secret-key
+      DEBUG: "False"
+      POSTGRES_DB: walletcore_test
+      POSTGRES_USER: walletcore
+      POSTGRES_PASSWORD: walletcore
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: pip install --no-cache-dir -r requirements.txt
+
+      - name: Run migrations
+        run: python manage.py migrate --noinput
+
+      - name: Run tests
+        run: pytest -q --cov=wallet --cov-report=term-missing
