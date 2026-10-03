@@ -11,3 +11,4 @@ redis==8.1.0
 django-redis==7.0.0
 drf-spectacular==0.30.0
 pytest-cov==7.1.0
+gunicorn==26.2.0
