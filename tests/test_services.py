@@ -793,6 +793,63 @@ def test_concurrent_withdraw_allows_only_one_success():
     ).count() == 2
 
 
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_opposite_transfers_do_not_deadlock():
+    wallet_a = WalletFactory(balance=Decimal("0.00"))
+    wallet_b = WalletFactory(balance=Decimal("0.00"))
+    SystemAccountFactory()
+
+    deposit(wallet_a.user, Decimal("200.00"))
+    deposit(wallet_b.user, Decimal("200.00"))
+
+    errors = []
+
+    def run_transfer(from_user, to_user, amount, idem_key):
+        close_old_connections()
+
+        try:
+            transfer_idempotent(from_user, to_user, amount, idem_key)
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_a_to_b = executor.submit(
+            run_transfer,
+            wallet_a.user,
+            wallet_b.user,
+            Decimal("50.00"),
+            "concurrent-transfer-a-to-b",
+        )
+        future_b_to_a = executor.submit(
+            run_transfer,
+            wallet_b.user,
+            wallet_a.user,
+            Decimal("30.00"),
+            "concurrent-transfer-b-to-a",
+        )
+
+        future_a_to_b.result()
+        future_b_to_a.result()
+
+    assert errors == []
+
+    wallet_a.refresh_from_db()
+    wallet_b.refresh_from_db()
+
+    assert wallet_a.balance == Decimal("180.00")
+    assert wallet_b.balance == Decimal("220.00")
+
+    assert Transaction.objects.filter(
+        type=Transaction.TransactionType.TRANSFER
+    ).count() == 2
+
+    assert LedgerEntry.objects.filter(
+        transaction__type=Transaction.TransactionType.TRANSFER
+    ).count() == 4
+
+
 @pytest.mark.django_db
 def test_withdraw_rejects_inactive_wallet():
     wallet = WalletFactory(is_active=False)
